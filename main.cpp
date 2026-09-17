@@ -76,6 +76,10 @@ const int MAX_ASTEROID_TOUGHNESS = 2500;
 const float MIN_POWERUP_DROP_CHANCE = 10.f;
 const float MAX_POWERUP_DROP_CHANCE = 40.f;
 
+// Difficulty progression
+const int DIFFICULTY_MAX_SCORE = 10000;
+const int MIN_SPAWN_RATE = 100;
+
 // Trail
 const sf::Color TRAIL_READY_COLOR = sf::Color::Cyan;
 const sf::Color TRAIL_BASIC_COLOR = sf::Color::Green;
@@ -101,11 +105,17 @@ const float EXPLOSION_OUTLINE_THICKNESS = 6.f;
 const float SHIELD_RADIUS = 32.f;
 const float SHIELD_OUTLINE_THICKNESS = 3.f;
 
+// Danger border
+const float DANGER_BORDER_THICKNESS = 3.f;
+const float DANGER_GLOW_SIZE = 22.f;
+const float DANGER_PULSE_LENGTH = 100.f;
+const float DANGER_PULSE_SPEED = 4.f;
+
 // Other gameplay
 const int SPAWN_X = 900;
 const int INITIAL_SPAWN_RATE = 500;
 const int INITIAL_SWAP_SPEED = 40;
-const int SCORE_INTERVAL = 10;
+const int SCORE_INTERVAL = 15;
 
 // UI
 const float BAR_WIDTH = 140.f;
@@ -175,6 +185,9 @@ float explosion_start_radius = 5.f;
 
 // Shield visual
 sf::CircleShape shield_visual;
+
+// Danger border
+sf::Clock danger_border_clock;
 // --------------------------------------------------------------------
 
 // function declarations
@@ -184,6 +197,12 @@ int randint(int min, int max);
 void rotate(sf::ConvexShape &cs, int p_count, double degrees, int &o = orientation);
 
 int normalize_angle(int angle);
+
+float get_difficulty_progress();
+
+void update_difficulty();
+
+void draw_danger_border();
 
 bool projections_overlap(const sf::ConvexShape &a, const sf::ConvexShape &b);
 bool projections_overlap(const sf::CircleShape &a, const sf::ConvexShape &b);
@@ -196,299 +215,288 @@ bool check_collision(const sf::ConvexShape &a, const sf::CircleShape &b);
 // classes
 // --------------------------------------------------------------------
 class Projectile : public sf::ConvexShape {
-    public:
-        sf::ConvexShape creator;
-        int direction;
-        int p_type;
-        int power;
-        float travel_speed;
-        float energy_cost;
-        sf::ConvexShape hitbox;
+public:
+    sf::ConvexShape creator;
+    int direction;
+    int p_type;
+    int power;
+    float travel_speed;
+    float energy_cost;
+    sf::ConvexShape hitbox;
 
-        Projectile(sf::ConvexShape creator, int p_type) {
-            this -> creator = creator;
-            this -> direction = orientation;
-            this -> p_type = p_type;
+    Projectile(sf::ConvexShape creator, int p_type) {
+        this->creator = creator;
+        this->direction = orientation;
+        this->p_type = p_type;
 
-            this -> setPointCount(4UL);
-            this -> hitbox.setPointCount(4UL);
+        this->setPointCount(4UL);
+        this->hitbox.setPointCount(4UL);
 
-            float x_size;
-            float y_size;
-            sf::Color color;
+        float x_size;
+        float y_size;
+        sf::Color color;
 
-            switch(p_type) {
-                case 1:
-                    x_size = BASIC_PROJECTILE_X_SIZE;
-                    y_size = BASIC_PROJECTILE_Y_SIZE;
-                    color = sf::Color::Green;
-                    this -> power = BASIC_PROJECTILE_POWER;
-                    this -> travel_speed = BASIC_PROJECTILE_SPEED;
-                    this -> energy_cost = BASIC_PROJECTILE_ENERGY;
-                    break;
+        switch(p_type) {
+            case 1:
+                x_size = BASIC_PROJECTILE_X_SIZE;
+                y_size = BASIC_PROJECTILE_Y_SIZE;
+                color = sf::Color::Green;
+                this->power = BASIC_PROJECTILE_POWER;
+                this->travel_speed = BASIC_PROJECTILE_SPEED;
+                this->energy_cost = BASIC_PROJECTILE_ENERGY;
+                break;
 
-                case 2:
-                    x_size = HEAVY_PROJECTILE_X_SIZE;
-                    y_size = HEAVY_PROJECTILE_Y_SIZE;
-                    color = TRAIL_HEAVY_COLOR;
-                    this -> power = HEAVY_PROJECTILE_POWER;
-                    this -> travel_speed = HEAVY_PROJECTILE_SPEED;
-                    this -> energy_cost = HEAVY_PROJECTILE_ENERGY;
-                    break;
+            case 2:
+                x_size = HEAVY_PROJECTILE_X_SIZE;
+                y_size = HEAVY_PROJECTILE_Y_SIZE;
+                color = TRAIL_HEAVY_COLOR;
+                this->power = HEAVY_PROJECTILE_POWER;
+                this->travel_speed = HEAVY_PROJECTILE_SPEED;
+                this->energy_cost = HEAVY_PROJECTILE_ENERGY;
+                break;
 
-                default:
-                    x_size = BASIC_PROJECTILE_X_SIZE;
-                    y_size = BASIC_PROJECTILE_Y_SIZE;
-                    color = sf::Color::Green;
-                    this -> power = BASIC_PROJECTILE_POWER;
-                    this -> travel_speed = BASIC_PROJECTILE_SPEED;
-                    this -> energy_cost = BASIC_PROJECTILE_ENERGY;
-                    break;
-            }
-
-            this -> setPoint(0, sf::Vector2f(0.f, 0.f));
-            this -> setPoint(1, sf::Vector2f(x_size, y_size));
-            this -> setPoint(2, sf::Vector2f(x_size * 2, 0.f));
-            this -> setPoint(3, sf::Vector2f(x_size, -y_size));
-            this -> setFillColor(color);
-
-            this -> hitbox.setPoint(0, sf::Vector2f(0.f, -y_size));
-            this -> hitbox.setPoint(1, sf::Vector2f(x_size * 2, -y_size));
-            this -> hitbox.setPoint(2, sf::Vector2f(x_size * 2, y_size));
-            this -> hitbox.setPoint(3, sf::Vector2f(0.f, y_size));
-            this -> hitbox.setFillColor(sf::Color::Transparent);
-            this -> hitbox.setOutlineThickness(2.f);
-            this -> hitbox.setOutlineColor(sf::Color::Red);
-
-            this -> setOrigin(x_size, 0.f);
-            this -> hitbox.setOrigin(x_size, 0.f);
-            this -> setRotation(direction);
-            this -> hitbox.setRotation(direction);
-
-            sf::Vector2f tip = player.getPoint(1) + player.getPosition();
-            this -> setPosition(tip);
-            this -> hitbox.setPosition(tip);
+            default:
+                x_size = BASIC_PROJECTILE_X_SIZE;
+                y_size = BASIC_PROJECTILE_Y_SIZE;
+                color = sf::Color::Green;
+                this->power = BASIC_PROJECTILE_POWER;
+                this->travel_speed = BASIC_PROJECTILE_SPEED;
+                this->energy_cost = BASIC_PROJECTILE_ENERGY;
+                break;
         }
 
-        void travel(float speed) {
-            float radians = direction * (M_PI / 180);
-            this -> move((speed * 2) * this -> travel_speed * cos(radians), (speed * 2) * this -> travel_speed * sin(radians));
-            this -> hitbox.move((speed * 2) * this -> travel_speed * cos(radians), (speed * 2) * this -> travel_speed * sin(radians));
-        }
+        this->setPoint(0, sf::Vector2f(0.f, 0.f));
+        this->setPoint(1, sf::Vector2f(x_size, y_size));
+        this->setPoint(2, sf::Vector2f(x_size * 2, 0.f));
+        this->setPoint(3, sf::Vector2f(x_size, -y_size));
+        this->setFillColor(color);
+
+        this->hitbox.setPoint(0, sf::Vector2f(0.f, -y_size));
+        this->hitbox.setPoint(1, sf::Vector2f(x_size * 2, -y_size));
+        this->hitbox.setPoint(2, sf::Vector2f(x_size * 2, y_size));
+        this->hitbox.setPoint(3, sf::Vector2f(0.f, y_size));
+        this->hitbox.setFillColor(sf::Color::Transparent);
+        this->hitbox.setOutlineThickness(2.f);
+        this->hitbox.setOutlineColor(sf::Color::Red);
+
+        this->setOrigin(x_size, 0.f);
+        this->hitbox.setOrigin(x_size, 0.f);
+        this->setRotation(direction);
+        this->hitbox.setRotation(direction);
+
+        sf::Vector2f tip = player.getPoint(1) + player.getPosition();
+        this->setPosition(tip);
+        this->hitbox.setPosition(tip);
+    }
+
+    void travel(float speed) {
+        float radians = direction * (M_PI / 180);
+        this->move((speed * 2) * this->travel_speed * cos(radians), (speed * 2) * this->travel_speed * sin(radians));
+        this->hitbox.move((speed * 2) * this->travel_speed * cos(radians), (speed * 2) * this->travel_speed * sin(radians));
+    }
 };
-
 
 class Asteroid : public sf::ConvexShape {
-    public:
-        int durability;
-        float spawny;
-        float radius;
-        float speed;
-        float density_multiplier;
-        int toughness;
-        sf::CircleShape hitbox;
+public:
+    int durability;
+    float spawny;
+    float radius;
+    float speed;
+    float density_multiplier;
+    int toughness;
+    sf::CircleShape hitbox;
 
-        Asteroid(float x, float y) {
-            setPointCount(randint(9, 12));
+    Asteroid(float x, float y) {
+        setPointCount(randint(9, 12));
 
-            int spawn = randint(0, 200);
-            this -> spawny = y;
+        int spawn = randint(0, 200);
+        this->spawny = y;
 
-            if(spawn < 80) {
-                this -> radius = randint(30, 40);
-            }
-            else if(spawn < 160) {
-                this -> radius = randint(60, 75);
-            }
-            else {
-                this -> radius = randint(90, 100);
-            }
-
-            // --------------------------------------------------------
-            // Asteroid density
-            // --------------------------------------------------------
-            int density_roll = randint(0, 100);
-
-            if(score < 10) {
-                if(density_roll < 75) {
-                    this -> density_multiplier = 1.f;
-                }
-                else if(density_roll < 95) {
-                    this -> density_multiplier = 1.5f;
-                }
-                else {
-                    this -> density_multiplier = 2.f;
-                }
-            }
-            else if(score < 25) {
-                if(density_roll < 50) {
-                    this -> density_multiplier = 1.f;
-                }
-                else if(density_roll < 85) {
-                    this -> density_multiplier = 1.5f;
-                }
-                else if(density_roll < 98) {
-                    this -> density_multiplier = 2.f;
-                }
-                else {
-                    this -> density_multiplier = 2.5f;
-                }
-            }
-            else {
-                if(density_roll < 25) {
-                    this -> density_multiplier = 1.f;
-                }
-                else if(density_roll < 65) {
-                    this -> density_multiplier = 1.5f;
-                }
-                else if(density_roll < 90) {
-                    this -> density_multiplier = 2.f;
-                }
-                else {
-                    this -> density_multiplier = 2.5f;
-                }
-            }
-
-            float hitbox_radius = radius * 0.88;
-            this -> hitbox.setRadius(hitbox_radius);
-            this -> hitbox.setPosition(this -> getPosition().x + SPAWN_X - hitbox_radius, this -> getPosition().y + this -> spawny - hitbox_radius);
-            this -> hitbox.setFillColor(sf::Color::Transparent);
-            this -> hitbox.setOutlineThickness(2.f);
-            this -> hitbox.setOutlineColor(sf::Color::Red);
-
-            toughness = static_cast<int>(this -> radius * 10 * this -> density_multiplier);
-            durability = toughness;
-            speed = 10.f / radius;
-
-            for(int i = 0; i < getPointCount(); ++i) {
-                float angle = (i * 2 * M_PI) / getPointCount();
-                float offsetX = cos(angle) * radius;
-                float offsetY = sin(angle) * radius;
-                setPoint(i, sf::Vector2f(x + offsetX, y + offsetY));
-            }
-
-            int grey_shade;
-
-            if(this -> density_multiplier == 1.f) {
-                grey_shade = randint(150, 211);
-            }
-            else if(this -> density_multiplier == 1.5f) {
-                grey_shade = randint(110, 149);
-            }
-            else if(this -> density_multiplier == 2.f) {
-                grey_shade = randint(80, 109);
-            }
-            else {
-                grey_shade = randint(50, 79);
-            }
-
-            setFillColor(sf::Color(grey_shade, grey_shade, grey_shade, 255));
+        if(spawn < 80) {
+            this->radius = randint(30, 40);
+        }
+        else if(spawn < 160) {
+            this->radius = randint(60, 75);
+        }
+        else {
+            this->radius = randint(90, 100);
         }
 
-        void move(float x, float y) {
-            sf::ConvexShape::move(x, y);
-            hitbox.move(x, y);
+        // --------------------------------------------------------
+        // Asteroid density progression
+        // --------------------------------------------------------
+        float difficulty_progress = get_difficulty_progress();
+        float density_roll = randint(0, 10000) / 100.f;
+
+        // Starting distribution:
+        // 75% -> 1x
+        // 20% -> 1.5x
+        // 5%  -> 2x
+        // 0%  -> 2.5x
+        //
+        // Maximum distribution:
+        // 25% -> 1x
+        // 40% -> 1.5x
+        // 25% -> 2x
+        // 10% -> 2.5x
+        //
+        // The probabilities smoothly transition between the two.
+        float chance_1 = 75.f + (25.f - 75.f) * difficulty_progress;
+        float chance_15 = 95.f + (65.f - 95.f) * difficulty_progress;
+        float chance_2 = 100.f - (10.f * difficulty_progress);
+
+        if(density_roll < chance_1) {
+            this->density_multiplier = 1.f;
+        }
+        else if(density_roll < chance_15) {
+            this->density_multiplier = 1.5f;
+        }
+        else if(density_roll < chance_2) {
+            this->density_multiplier = 2.f;
+        }
+        else {
+            this->density_multiplier = 2.5f;
         }
 
-        float get_drop_chance() const {
-            float toughness_progress = static_cast<float>(toughness - MIN_ASTEROID_TOUGHNESS) / static_cast<float>(MAX_ASTEROID_TOUGHNESS - MIN_ASTEROID_TOUGHNESS);
+        float hitbox_radius = radius * 0.88;
+        this->hitbox.setRadius(hitbox_radius);
+        this->hitbox.setPosition(this->getPosition().x + SPAWN_X - hitbox_radius, this->getPosition().y + this->spawny - hitbox_radius);
+        this->hitbox.setFillColor(sf::Color::Transparent);
+        this->hitbox.setOutlineThickness(2.f);
+        this->hitbox.setOutlineColor(sf::Color::Red);
 
-            if(toughness_progress < 0.f) {
-                toughness_progress = 0.f;
-            }
+        toughness = static_cast<int>(this->radius * 10 * this->density_multiplier);
+        durability = toughness;
+        speed = 10.f / radius;
 
-            if(toughness_progress > 1.f) {
-                toughness_progress = 1.f;
-            }
-
-            return MIN_POWERUP_DROP_CHANCE + toughness_progress * (MAX_POWERUP_DROP_CHANCE - MIN_POWERUP_DROP_CHANCE);
+        for(int i = 0; i < getPointCount(); ++i) {
+            float angle = (i * 2 * M_PI) / getPointCount();
+            float offsetX = cos(angle) * radius;
+            float offsetY = sin(angle) * radius;
+            setPoint(i, sf::Vector2f(x + offsetX, y + offsetY));
         }
+
+        int grey_shade;
+
+        if(this->density_multiplier == 1.f) {
+            grey_shade = randint(150, 211);
+        }
+        else if(this->density_multiplier == 1.5f) {
+            grey_shade = randint(110, 149);
+        }
+        else if(this->density_multiplier == 2.f) {
+            grey_shade = randint(80, 109);
+        }
+        else {
+            grey_shade = randint(50, 79);
+        }
+
+        setFillColor(sf::Color(grey_shade, grey_shade, grey_shade, 255));
+    }
+
+    void move(float x, float y) {
+        sf::ConvexShape::move(x, y);
+        hitbox.move(x, y);
+    }
+
+    float get_drop_chance() const {
+        float toughness_progress = static_cast<float>(toughness - MIN_ASTEROID_TOUGHNESS) / static_cast<float>(MAX_ASTEROID_TOUGHNESS - MIN_ASTEROID_TOUGHNESS);
+
+        if(toughness_progress < 0.f) {
+            toughness_progress = 0.f;
+        }
+
+        if(toughness_progress > 1.f) {
+            toughness_progress = 1.f;
+        }
+
+        return MIN_POWERUP_DROP_CHANCE + toughness_progress * (MAX_POWERUP_DROP_CHANCE - MIN_POWERUP_DROP_CHANCE);
+    }
 };
 
-
 class Powerup : public sf::CircleShape {
-    public:
-        int p_type;
-        sf::CircleShape hitbox;
+public:
+    int p_type;
+    sf::CircleShape hitbox;
 
-        Powerup(float x, float y, int p_type) {
-            this -> p_type = p_type;
+    Powerup(float x, float y, int p_type) {
+        this->p_type = p_type;
 
-            this -> setRadius(POWERUP_RADIUS);
-            this -> setOrigin(POWERUP_RADIUS, POWERUP_RADIUS);
-            this -> setPosition(x, y);
+        this->setRadius(POWERUP_RADIUS);
+        this->setOrigin(POWERUP_RADIUS, POWERUP_RADIUS);
+        this->setPosition(x, y);
 
-            this -> hitbox.setRadius(POWERUP_RADIUS);
-            this -> hitbox.setOrigin(POWERUP_RADIUS, POWERUP_RADIUS);
-            this -> hitbox.setPosition(x, y);
-            this -> hitbox.setFillColor(sf::Color::Transparent);
-            this -> hitbox.setOutlineThickness(2.f);
-            this -> hitbox.setOutlineColor(sf::Color::Red);
+        this->hitbox.setRadius(POWERUP_RADIUS);
+        this->hitbox.setOrigin(POWERUP_RADIUS, POWERUP_RADIUS);
+        this->hitbox.setPosition(x, y);
+        this->hitbox.setFillColor(sf::Color::Transparent);
+        this->hitbox.setOutlineThickness(2.f);
+        this->hitbox.setOutlineColor(sf::Color::Red);
 
-            switch(p_type) {
-                case 1:
-                    this -> setFillColor(sf::Color::Red);
-                    this -> setOutlineThickness(2.f);
-                    this -> setOutlineColor(sf::Color::White);
-                    break;
+        switch(p_type) {
+            case 1:
+                this->setFillColor(sf::Color::Red);
+                this->setOutlineThickness(2.f);
+                this->setOutlineColor(sf::Color::White);
+                break;
 
-                case 2:
-                    this -> setFillColor(sf::Color::Cyan);
-                    this -> setOutlineThickness(2.f);
-                    this -> setOutlineColor(sf::Color::White);
-                    break;
+            case 2:
+                this->setFillColor(sf::Color::Cyan);
+                this->setOutlineThickness(2.f);
+                this->setOutlineColor(sf::Color::White);
+                break;
 
-                case 3:
-                    this -> setFillColor(sf::Color::Yellow);
-                    this -> setOutlineThickness(2.f);
-                    this -> setOutlineColor(sf::Color::White);
-                    break;
+            case 3:
+                this->setFillColor(sf::Color::Yellow);
+                this->setOutlineThickness(2.f);
+                this->setOutlineColor(sf::Color::White);
+                break;
 
-                case 4:
-                    this -> setFillColor(PLAYER_RAPID_FIRE_COLOR);
-                    this -> setOutlineThickness(2.f);
-                    this -> setOutlineColor(sf::Color::White);
-                    break;
+            case 4:
+                this->setFillColor(PLAYER_RAPID_FIRE_COLOR);
+                this->setOutlineThickness(2.f);
+                this->setOutlineColor(sf::Color::White);
+                break;
 
-                default:
-                    this -> setFillColor(sf::Color::White);
-                    this -> setOutlineThickness(2.f);
-                    this -> setOutlineColor(sf::Color::White);
-                    break;
-            }
+            default:
+                this->setFillColor(sf::Color::White);
+                this->setOutlineThickness(2.f);
+                this->setOutlineColor(sf::Color::White);
+                break;
         }
+    }
 
-        void move(float x, float y) {
-            sf::CircleShape::move(x, y);
-            hitbox.move(x, y);
+    void move(float x, float y) {
+        sf::CircleShape::move(x, y);
+        hitbox.move(x, y);
+    }
+
+    void activate(float &energy, int &health, int &turn_speed, int &interval, int &agility_timer, int &rapid_fire_timer, int &shield_timer, bool &shield_active) {
+        switch(p_type) {
+            case 1:
+                health++;
+
+                if(health > MAX_HEALTH) {
+                    health = MAX_HEALTH;
+                }
+                break;
+
+            case 2:
+                shield_active = true;
+                shield_timer = SHIELD_DURATION;
+                break;
+
+            case 3:
+                turn_speed = AGILITY_TURN_SPEED;
+                agility_timer = AGILITY_DURATION;
+                break;
+
+            case 4:
+                interval = RAPID_FIRE_INTERVAL;
+                rapid_fire_timer = RAPID_FIRE_DURATION;
+                break;
         }
-
-        void activate(float &energy, int &health, int &turn_speed, int &interval, int &agility_timer, int &rapid_fire_timer, int &shield_timer, bool &shield_active) {
-            switch(p_type) {
-                case 1:
-                    health++;
-
-                    if(health > MAX_HEALTH) {
-                        health = MAX_HEALTH;
-                    }
-                    break;
-
-                case 2:
-                    shield_active = true;
-                    shield_timer = SHIELD_DURATION;
-                    break;
-
-                case 3:
-                    turn_speed = AGILITY_TURN_SPEED;
-                    agility_timer = AGILITY_DURATION;
-                    break;
-
-                case 4:
-                    interval = RAPID_FIRE_INTERVAL;
-                    rapid_fire_timer = RAPID_FIRE_DURATION;
-                    break;
-            }
-        }
+    }
 };
 
 // Object storage
@@ -501,8 +509,8 @@ std::vector<Powerup> powerups;
 // utility functions
 // --------------------------------------------------------------------
 int randint(int min, int max) {
-    std::random_device dev;
-    std::mt19937 rng(dev());
+    static std::random_device dev;
+    static std::mt19937 rng(dev());
     std::uniform_int_distribution<std::mt19937::result_type> dist(min, max);
     return dist(rng);
 }
@@ -545,6 +553,158 @@ int normalize_angle(int angle) {
     }
 
     return angle;
+}
+
+float get_difficulty_progress() {
+    float progress = static_cast<float>(score) / static_cast<float>(DIFFICULTY_MAX_SCORE);
+
+    if(progress < 0.f) {
+        progress = 0.f;
+    }
+
+    if(progress > 1.f) {
+        progress = 1.f;
+    }
+
+    return progress;
+}
+
+void update_difficulty() {
+    float progress = get_difficulty_progress();
+
+    float difficulty_curve = progress * progress * (3.f - 2.f * progress);
+
+    float current_spawn_rate = INITIAL_SPAWN_RATE + (MIN_SPAWN_RATE - INITIAL_SPAWN_RATE) * difficulty_curve;
+
+    spawn_rate = static_cast<int>(current_spawn_rate);
+
+    if(spawn_rate < MIN_SPAWN_RATE) {
+        spawn_rate = MIN_SPAWN_RATE;
+    }
+}
+
+void draw_danger_border() {
+    float progress = get_difficulty_progress();
+    float time = danger_border_clock.getElapsedTime().asSeconds();
+
+    // Slow pulse makes the entire perimeter breathe like an energy field.
+    float pulse = (sin(time * 2.5f) + 1.f) * 0.5f;
+
+    // A slightly stronger field as difficulty rises.
+    float base_alpha = 45.f + progress * 35.f;
+    float bright_alpha = 125.f + progress * 70.f;
+
+    // ------------------------------------------------------------
+    // Outer atmospheric glow
+    // ------------------------------------------------------------
+    sf::RectangleShape top_glow(sf::Vector2f(WINDOW_WIDTH, DANGER_GLOW_SIZE));
+    sf::RectangleShape bottom_glow(sf::Vector2f(WINDOW_WIDTH, DANGER_GLOW_SIZE));
+    sf::RectangleShape left_glow(sf::Vector2f(DANGER_GLOW_SIZE, WINDOW_HEIGHT));
+    sf::RectangleShape right_glow(sf::Vector2f(DANGER_GLOW_SIZE, WINDOW_HEIGHT));
+
+    top_glow.setPosition(0.f, 0.f);
+    bottom_glow.setPosition(0.f, WINDOW_HEIGHT - DANGER_GLOW_SIZE);
+    left_glow.setPosition(0.f, 0.f);
+    right_glow.setPosition(WINDOW_WIDTH - DANGER_GLOW_SIZE, 0.f);
+
+    sf::Uint8 glow_alpha = static_cast<sf::Uint8>(base_alpha + pulse * 25.f);
+
+    top_glow.setFillColor(sf::Color(255, 0, 0, glow_alpha));
+    bottom_glow.setFillColor(sf::Color(255, 0, 0, glow_alpha));
+    left_glow.setFillColor(sf::Color(255, 0, 0, glow_alpha));
+    right_glow.setFillColor(sf::Color(255, 0, 0, glow_alpha));
+
+    window.draw(top_glow);
+    window.draw(bottom_glow);
+    window.draw(left_glow);
+    window.draw(right_glow);
+
+    // ------------------------------------------------------------
+    // Main plasma perimeter
+    // ------------------------------------------------------------
+    sf::RectangleShape top_edge(sf::Vector2f(WINDOW_WIDTH, DANGER_BORDER_THICKNESS));
+    sf::RectangleShape bottom_edge(sf::Vector2f(WINDOW_WIDTH, DANGER_BORDER_THICKNESS));
+    sf::RectangleShape left_edge(sf::Vector2f(DANGER_BORDER_THICKNESS, WINDOW_HEIGHT));
+    sf::RectangleShape right_edge(sf::Vector2f(DANGER_BORDER_THICKNESS, WINDOW_HEIGHT));
+
+    top_edge.setPosition(0.f, 0.f);
+    bottom_edge.setPosition(0.f, WINDOW_HEIGHT - DANGER_BORDER_THICKNESS);
+    left_edge.setPosition(0.f, 0.f);
+    right_edge.setPosition(WINDOW_WIDTH - DANGER_BORDER_THICKNESS, 0.f);
+
+    sf::Uint8 edge_alpha = static_cast<sf::Uint8>(bright_alpha + pulse * 60.f);
+
+    top_edge.setFillColor(sf::Color(255, 20, 20, edge_alpha));
+    bottom_edge.setFillColor(sf::Color(255, 20, 20, edge_alpha));
+    left_edge.setFillColor(sf::Color(255, 20, 20, edge_alpha));
+    right_edge.setFillColor(sf::Color(255, 20, 20, edge_alpha));
+
+    window.draw(top_edge);
+    window.draw(bottom_edge);
+    window.draw(left_edge);
+    window.draw(right_edge);
+
+    // ------------------------------------------------------------
+    // Moving energy pulses
+    // ------------------------------------------------------------
+    float pulse_position = fmod(time * DANGER_PULSE_SPEED * 60.f, DANGER_PULSE_LENGTH * 8.f);
+
+    sf::RectangleShape horizontal_pulse(sf::Vector2f(DANGER_PULSE_LENGTH, 3.f));
+    sf::RectangleShape vertical_pulse(sf::Vector2f(3.f, DANGER_PULSE_LENGTH));
+
+    sf::Uint8 pulse_alpha = static_cast<sf::Uint8>(180.f + pulse * 75.f);
+
+    horizontal_pulse.setFillColor(sf::Color(255, 90, 90, pulse_alpha));
+    vertical_pulse.setFillColor(sf::Color(255, 90, 90, pulse_alpha));
+
+    // Top and bottom pulses move left -> right.
+    horizontal_pulse.setPosition(pulse_position - DANGER_PULSE_LENGTH, 0.f);
+    window.draw(horizontal_pulse);
+
+    horizontal_pulse.setPosition(WINDOW_WIDTH - pulse_position, WINDOW_HEIGHT - 3.f);
+    window.draw(horizontal_pulse);
+
+    // Left and right pulses move top -> bottom.
+    vertical_pulse.setPosition(0.f, pulse_position - DANGER_PULSE_LENGTH);
+    window.draw(vertical_pulse);
+
+    vertical_pulse.setPosition(WINDOW_WIDTH - 3.f, WINDOW_HEIGHT - pulse_position);
+    window.draw(vertical_pulse);
+
+    // ------------------------------------------------------------
+    // Bright corner emitters
+    // ------------------------------------------------------------
+    sf::RectangleShape corner_horizontal(sf::Vector2f(28.f, 3.f));
+    sf::RectangleShape corner_vertical(sf::Vector2f(3.f, 28.f));
+
+    sf::Uint8 corner_alpha = static_cast<sf::Uint8>(210.f + pulse * 45.f);
+
+    corner_horizontal.setFillColor(sf::Color(255, 120, 120, corner_alpha));
+    corner_vertical.setFillColor(sf::Color(255, 120, 120, corner_alpha));
+
+    // Top-left
+    corner_horizontal.setPosition(0.f, 0.f);
+    corner_vertical.setPosition(0.f, 0.f);
+    window.draw(corner_horizontal);
+    window.draw(corner_vertical);
+
+    // Top-right
+    corner_horizontal.setPosition(WINDOW_WIDTH - 28.f, 0.f);
+    corner_vertical.setPosition(WINDOW_WIDTH - 3.f, 0.f);
+    window.draw(corner_horizontal);
+    window.draw(corner_vertical);
+
+    // Bottom-left
+    corner_horizontal.setPosition(0.f, WINDOW_HEIGHT - 3.f);
+    corner_vertical.setPosition(0.f, WINDOW_HEIGHT - 28.f);
+    window.draw(corner_horizontal);
+    window.draw(corner_vertical);
+
+    // Bottom-right
+    corner_horizontal.setPosition(WINDOW_WIDTH - 28.f, WINDOW_HEIGHT - 3.f);
+    corner_vertical.setPosition(WINDOW_WIDTH - 3.f, WINDOW_HEIGHT - 28.f);
+    window.draw(corner_horizontal);
+    window.draw(corner_vertical);
 }
 
 bool projections_overlap(const sf::ConvexShape &a, const sf::ConvexShape &b) {
@@ -903,6 +1063,11 @@ int main() {
             swap_count++;
 
             // ------------------------------------------------------------
+            // Difficulty progression
+            // ------------------------------------------------------------
+            update_difficulty();
+
+            // ------------------------------------------------------------
             // Powerup timers
             // ------------------------------------------------------------
             if(agility_timer > 0) {
@@ -1033,28 +1198,30 @@ int main() {
             bool hit_top = bounds.top <= 0.f;
             bool hit_bottom = bounds.top + bounds.height >= window.getSize().y;
 
-            if(hit_top) {
-                float correction = -bounds.top;
-                player.move(0.f, correction);
-                player_hitbox.move(0.f, correction);
+            if(hit_left || hit_right || hit_top || hit_bottom) {
+                player_death();
             }
 
-            if(hit_bottom) {
-                float correction = window.getSize().y - (bounds.top + bounds.height);
-                player.move(0.f, correction);
-                player_hitbox.move(0.f, correction);
-            }
+            if(current_state == GAME_OVER) {
+                window.clear();
 
-            if(hit_left) {
-                float correction = -bounds.left;
-                player.move(correction, 0.f);
-                player_hitbox.move(correction, 0.f);
-            }
+                if(explosion_active) {
+                    float elapsed = explosion_clock.getElapsedTime().asSeconds();
+                    float progress = elapsed / EXPLOSION_DURATION;
 
-            if(hit_right) {
-                float correction = window.getSize().x - (bounds.left + bounds.width);
-                player.move(correction, 0.f);
-                player_hitbox.move(correction, 0.f);
+                    if(progress < 1.f) {
+                        float explosion_radius = explosion_start_radius + (EXPLOSION_MAX_RADIUS - explosion_start_radius) * progress;
+                        explosion.setRadius(explosion_radius);
+                        explosion.setOrigin(explosion_radius, explosion_radius);
+
+                        sf::Uint8 alpha = static_cast<sf::Uint8>(255.f * (1.f - progress));
+                        explosion.setOutlineColor(sf::Color(explosion_color.r, explosion_color.g, explosion_color.b, alpha));
+                        window.draw(explosion);
+                    }
+                }
+
+                window.display();
+                continue;
             }
 
             // ------------------------------------------------------------
@@ -1109,6 +1276,11 @@ int main() {
             }
 
             window.clear();
+
+            // ------------------------------------------------------------
+            // Deadly perimeter
+            // ------------------------------------------------------------
+            draw_danger_border();
 
             // ------------------------------------------------------------
             // Update player trail
@@ -1191,6 +1363,10 @@ int main() {
                             belt[i].durability = 0;
                         }
                     }
+                }
+
+                if(current_state == GAME_OVER) {
+                    continue;
                 }
 
                 for(int j = 0; j < projs.size(); j++) {
@@ -1360,7 +1536,7 @@ int main() {
             // ------------------------------------------------------------
             interval_count++;
 
-            if(interval_count == SCORE_INTERVAL) {
+            if(interval_count >= SCORE_INTERVAL) {
                 score++;
                 interval_count = 0;
             }
