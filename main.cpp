@@ -3,18 +3,20 @@
 #include <SFML/Graphics.hpp>
 #include <SFML/Window.hpp>
 #include <SFML/System.hpp>
+#include <SFML/Audio.hpp>
 #include <iostream>
 #include <fstream>
 #include <random>
 #include <cmath>
 #include <vector>
 #include <algorithm>
+#include <array>
 // --------------------------------------------------------------------
 
 /*
 Run command:
 
-g++ main.cpp -I/opt/homebrew/Cellar/sfml/2.6.1/include -o prog -L/opt/homebrew/Cellar/sfml/2.6.1/lib -lsfml-graphics -lsfml-window -lsfml-system
+g++ -std=c++11 main.cpp -I/opt/homebrew/Cellar/sfml/2.6.1/include -o prog -L/opt/homebrew/Cellar/sfml/2.6.1/lib -lsfml-graphics -lsfml-window -lsfml-system -lsfml-audio
 
 */
 
@@ -117,6 +119,10 @@ const int INITIAL_SPAWN_RATE = 500;
 const int INITIAL_SWAP_SPEED = 40;
 const int SCORE_INTERVAL = 15;
 
+// Audio
+const float DEFAULT_SFX_VOLUME = 70.f;
+const float DEFAULT_MUSIC_VOLUME = 70.f;
+
 // UI
 const float BAR_WIDTH = 140.f;
 const float BAR_HEIGHT = 20.f;
@@ -133,6 +139,7 @@ enum GameState {
 };
 
 GameState current_state = MAIN_MENU;
+bool wait_for_enter_release = false;
 
 sf::RenderWindow window(sf::VideoMode(WINDOW_WIDTH, WINDOW_HEIGHT), "Polygon Perihelion", sf::Style::Close);
 sf::ConvexShape player(3UL);
@@ -140,6 +147,167 @@ sf::ConvexShape player_hitbox(3UL);
 std::vector<sf::CircleShape> trail;
 sf::Vector2f center(window.getSize().x / 2, window.getSize().y / 2);
 sf::Font font;
+
+float sfx_volume = DEFAULT_SFX_VOLUME;
+float music_volume = DEFAULT_MUSIC_VOLUME;
+bool rocket_idle_hum = true;
+bool show_keybinds = false;
+bool waiting_for_keybind = false;
+int keybind_selection = 0;
+
+struct Keybinds {
+    sf::Keyboard::Key fire = sf::Keyboard::Up;
+    sf::Keyboard::Key heavy_modifier = sf::Keyboard::LShift;
+    sf::Keyboard::Key turn_left = sf::Keyboard::Left;
+    sf::Keyboard::Key turn_right = sf::Keyboard::Right;
+    sf::Keyboard::Key toggle_hitboxes = sf::Keyboard::Grave;
+    sf::Keyboard::Key pause = sf::Keyboard::Escape;
+};
+
+Keybinds keybinds;
+
+class AudioSystem {
+public:
+    enum SoundId {
+        AGILITY_ACTIVATE,
+        AGILITY_DEACTIVATE,
+        BASIC_SHOT,
+        GAME_OVER,
+        HEAVY_SHOT,
+        HIGH_TOUGHNESS_ASTEROID_BREAK,
+        HULL_DAMAGED,
+        HULL_REGEN,
+        LOW_TOUGHNESS_ASTEROID_BREAK,
+        MID_TOUGHNESS_ASTEROID_BREAK,
+        PLAYER_DEATH,
+        POWERUP_SPAWN,
+        RAPID_FIRE_ACTIVATE,
+        RAPID_FIRE_DEACTIVATE,
+        ROCKET_TRAIL_HUM,
+        SETTING_ADJUSTMENT,
+        SHIELD_DOWN,
+        SHIELD_UP,
+        SOUND_COUNT
+    };
+
+private:
+    std::array<sf::SoundBuffer, SOUND_COUNT> buffers;
+    std::array<sf::Sound, 16> sound_pool;
+    sf::Sound trail_hum;
+    sf::Music ambient_music;
+    bool loaded = false;
+
+    const char *paths[SOUND_COUNT] = {
+        "sounds/agility_activate.mp3",
+        "sounds/agility_deactivate.mp3",
+        "sounds/basic_shot.mp3",
+        "sounds/game_over.mp3",
+        "sounds/heavy_shot.mp3",
+        "sounds/high_toughness_asteroid_break.mp3",
+        "sounds/hull_damaged.mp3",
+        "sounds/hull_regen.mp3",
+        "sounds/low_toughness_asteroid_break.mp3",
+        "sounds/mid_toughness_asteroid_break.mp3",
+        "sounds/player_death.mp3",
+        "sounds/powerup_spawn.mp3",
+        "sounds/rapidfire_activate.mp3",
+        "sounds/rapidfire_deactivate.mp3",
+        "sounds/rocket_trail_hum.mp3",
+        "sounds/setting_adjustment.mp3",
+        "sounds/shield_down.mp3",
+        "sounds/shield_up.mp3"
+    };
+
+public:
+    bool setup() {
+        loaded = true;
+
+        for(int i = 0; i < SOUND_COUNT; i++) {
+            if(!buffers[i].loadFromFile(paths[i])) {
+                std::cerr << "Error loading sound: " << paths[i] << std::endl;
+                loaded = false;
+            }
+        }
+
+        for(sf::Sound &sound : sound_pool) {
+            sound.setVolume(sfx_volume);
+        }
+
+        trail_hum.setVolume(sfx_volume);
+        trail_hum.setLoop(true);
+
+        if(!ambient_music.openFromFile("sounds/ambient_track.mp3")) {
+            std::cerr << "Error loading music: sounds/ambient_track.mp3" << std::endl;
+            loaded = false;
+        }
+        else {
+            ambient_music.setVolume(music_volume);
+            ambient_music.setLoop(true);
+        }
+
+        return loaded;
+    }
+
+    void set_volume(float volume) {
+        for(sf::Sound &sound : sound_pool) {
+            sound.setVolume(volume);
+        }
+
+        trail_hum.setVolume(volume);
+    }
+
+    void set_music_volume(float volume) {
+        ambient_music.setVolume(volume);
+    }
+
+    void start_ambient_music() {
+        if(ambient_music.getStatus() != sf::Music::Playing) {
+            ambient_music.play();
+        }
+    }
+
+    void stop_ambient_music() {
+        ambient_music.stop();
+    }
+
+    void play(SoundId id) {
+        if(!loaded) {
+            return;
+        }
+
+        for(sf::Sound &sound : sound_pool) {
+            if(sound.getStatus() == sf::Sound::Stopped) {
+                sound.setBuffer(buffers[id]);
+                sound.setVolume(sfx_volume);
+                sound.play();
+                return;
+            }
+        }
+
+        sound_pool[0].stop();
+        sound_pool[0].setBuffer(buffers[id]);
+        sound_pool[0].setVolume(sfx_volume);
+        sound_pool[0].play();
+    }
+
+    void start_trail_hum() {
+        if(!loaded || trail_hum.getStatus() == sf::Sound::Playing) {
+            return;
+        }
+
+        trail_hum.setBuffer(buffers[ROCKET_TRAIL_HUM]);
+        trail_hum.setVolume(sfx_volume);
+        trail_hum.play();
+    }
+
+    void stop_trail_hum() {
+        trail_hum.stop();
+    }
+};
+
+AudioSystem audio;
+
+int pause_selection = 0;
 
 int orientation = 0;
 
@@ -827,6 +995,290 @@ bool check_collision(const sf::ConvexShape &a, const sf::CircleShape &b) {
 
 // menu / game functions
 // --------------------------------------------------------------------
+void update_sfx_volume() {
+    audio.set_volume(sfx_volume);
+}
+
+void reset_player();
+
+void reset_run() {
+    current_state = MAIN_MENU;
+    audio.stop_trail_hum();
+    reset_player();
+    projs.clear();
+    belt.clear();
+    powerups.clear();
+    trail.clear();
+    explosion_active = false;
+
+    score = 0;
+    interval_count = 0;
+    energy = MAX_ENERGY;
+    health = MAX_HEALTH;
+    damage_cooldown = 0;
+
+    cooldown = 0;
+    interval = BASE_INTERVAL;
+    shot_time = interval;
+    spawn_rate = INITIAL_SPAWN_RATE;
+    spawn_chance = spawn_rate;
+    swap_speed = INITIAL_SWAP_SPEED;
+    swap_count = swap_speed;
+    speed = BASE_SPEED;
+    turn_speed = BASE_TURN_SPEED;
+
+    agility_timer = 0;
+    rapid_fire_timer = 0;
+    shield_timer = 0;
+    shield_active = false;
+
+    trail_target_color = TRAIL_READY_COLOR;
+    last_shot_type = 0;
+    heavy_cooldown_start = interval;
+    pause_selection = 0;
+    show_keybinds = false;
+    waiting_for_keybind = false;
+    keybind_selection = 0;
+
+    player.setFillColor(PLAYER_BASE_COLOR);
+}
+
+std::string key_name(sf::Keyboard::Key key) {
+    if(key >= sf::Keyboard::A && key <= sf::Keyboard::Z) {
+        return std::string(1, static_cast<char>('A' + (key - sf::Keyboard::A)));
+    }
+
+    if(key >= sf::Keyboard::Num0 && key <= sf::Keyboard::Num9) {
+        return std::string(1, static_cast<char>('0' + (key - sf::Keyboard::Num0)));
+    }
+
+    switch(key) {
+        case sf::Keyboard::Space: return "SPACE";
+        case sf::Keyboard::Enter: return "ENTER";
+        case sf::Keyboard::Escape: return "ESC";
+        case sf::Keyboard::Tab: return "TAB";
+        case sf::Keyboard::Backspace: return "BACKSPACE";
+        case sf::Keyboard::LShift: return "L-SHIFT";
+        case sf::Keyboard::RShift: return "R-SHIFT";
+        case sf::Keyboard::LControl: return "L-CTRL";
+        case sf::Keyboard::RControl: return "R-CTRL";
+        case sf::Keyboard::LAlt: return "L-ALT";
+        case sf::Keyboard::RAlt: return "R-ALT";
+        case sf::Keyboard::Up: return "UP";
+        case sf::Keyboard::Down: return "DOWN";
+        case sf::Keyboard::Left: return "LEFT";
+        case sf::Keyboard::Right: return "RIGHT";
+        case sf::Keyboard::Grave: return "GRAVE";
+        case sf::Keyboard::Comma: return "COMMA";
+        case sf::Keyboard::Period: return "PERIOD";
+        case sf::Keyboard::Slash: return "SLASH";
+        case sf::Keyboard::SemiColon: return "SEMICOLON";
+        case sf::Keyboard::Quote: return "QUOTE";
+        case sf::Keyboard::LBracket: return "L-BRACKET";
+        case sf::Keyboard::RBracket: return "R-BRACKET";
+        case sf::Keyboard::Backslash: return "BACKSLASH";
+        case sf::Keyboard::Equal: return "EQUAL";
+        case sf::Keyboard::Dash: return "HYPHEN";
+        case sf::Keyboard::Add: return "NUMPAD +";
+        case sf::Keyboard::Subtract: return "NUMPAD -";
+        case sf::Keyboard::Multiply: return "NUMPAD *";
+        case sf::Keyboard::Divide: return "NUMPAD /";
+        case sf::Keyboard::F1: return "F1";
+        case sf::Keyboard::F2: return "F2";
+        case sf::Keyboard::F3: return "F3";
+        case sf::Keyboard::F4: return "F4";
+        case sf::Keyboard::F5: return "F5";
+        case sf::Keyboard::F6: return "F6";
+        case sf::Keyboard::F7: return "F7";
+        case sf::Keyboard::F8: return "F8";
+        case sf::Keyboard::F9: return "F9";
+        case sf::Keyboard::F10: return "F10";
+        case sf::Keyboard::F11: return "F11";
+        case sf::Keyboard::F12: return "F12";
+        default: return "UNKNOWN";
+    }
+}
+
+void draw_keybinds_menu() {
+    window.clear();
+
+    sf::RectangleShape panel(sf::Vector2f(WINDOW_WIDTH - 100.f, WINDOW_HEIGHT - 100.f));
+    panel.setPosition(50.f, 50.f);
+    panel.setFillColor(sf::Color(10, 12, 25, 255));
+    panel.setOutlineThickness(3.f);
+    panel.setOutlineColor(sf::Color::Cyan);
+    window.draw(panel);
+
+    sf::Text title("KEYBINDS", font, 44);
+    title.setFillColor(sf::Color::Cyan);
+    title.setPosition(WINDOW_WIDTH / 2.f - title.getLocalBounds().width / 2.f, 75.f);
+    window.draw(title);
+
+    std::vector<std::string> bindings = {
+        "FIRE",
+        "HEAVY SHOT MODIFIER",
+        "TURN LEFT",
+        "TURN RIGHT",
+        "TOGGLE HITBOXES",
+        "PAUSE / RESUME"
+    };
+
+    std::vector<sf::Keyboard::Key> keys = {
+        keybinds.fire,
+        keybinds.heavy_modifier,
+        keybinds.turn_left,
+        keybinds.turn_right,
+        keybinds.toggle_hitboxes,
+        keybinds.pause
+    };
+
+    for(int i = 0; i < static_cast<int>(bindings.size()); i++) {
+        float y = 145.f + i * 65.f;
+
+        sf::Text binding(bindings[i], font, 21);
+        binding.setFillColor(i == keybind_selection ? sf::Color::Yellow : sf::Color::White);
+        binding.setPosition(135.f, y);
+        window.draw(binding);
+
+        sf::RectangleShape key_box(sf::Vector2f(190.f, 38.f));
+        key_box.setPosition(475.f, y - 5.f);
+        key_box.setFillColor(sf::Color(30, 35, 50, 255));
+        key_box.setOutlineThickness(2.f);
+        key_box.setOutlineColor(i == keybind_selection ? sf::Color::Yellow : sf::Color::Cyan);
+        window.draw(key_box);
+
+        sf::Text key_text(
+            waiting_for_keybind && i == keybind_selection ? "PRESS KEY" : key_name(keys[i]),
+            font,
+            18
+        );
+        key_text.setFillColor(waiting_for_keybind && i == keybind_selection ? sf::Color::Yellow : sf::Color::Cyan);
+        key_text.setPosition(
+            570.f - key_text.getLocalBounds().width / 2.f,
+            y + 2.f
+        );
+        window.draw(key_text);
+    }
+
+    sf::Text instructions(
+        waiting_for_keybind
+            ? "PRESS A KEY TO REBIND    ESC: CANCEL"
+            : "UP/DOWN: SELECT    ENTER: REBIND    ESC: BACK",
+        font,
+        14
+    );
+    instructions.setFillColor(sf::Color(130, 130, 150, 255));
+    instructions.setPosition(
+        WINDOW_WIDTH / 2.f - instructions.getLocalBounds().width / 2.f,
+        635.f
+    );
+    window.draw(instructions);
+
+    window.display();
+}
+
+void draw_pause_menu() {
+    if(show_keybinds) {
+        draw_keybinds_menu();
+        return;
+    }
+
+    window.clear();
+
+    sf::RectangleShape panel(sf::Vector2f(WINDOW_WIDTH - 100.f, WINDOW_HEIGHT - 100.f));
+    panel.setPosition(50.f, 50.f);
+    panel.setFillColor(sf::Color(10, 12, 25, 255));
+    panel.setOutlineThickness(3.f);
+    panel.setOutlineColor(sf::Color(0, 220, 255, 220));
+    window.draw(panel);
+
+    sf::Text title("GAME PAUSED", font, 46);
+    title.setFillColor(sf::Color::Cyan);
+    title.setPosition(WINDOW_WIDTH / 2.f - title.getLocalBounds().width / 2.f, 70.f);
+    window.draw(title);
+
+    std::vector<std::string> options = {
+        "Resume",
+        "Restart Run",
+        "Exit to Main Menu",
+        "Rocket Idle Hum: " + std::string(rocket_idle_hum ? "ON" : "OFF"),
+        "Keybinds"
+    };
+
+    for(int i = 0; i < static_cast<int>(options.size()); i++) {
+        float y = 170.f + i * 55.f;
+
+        sf::Text option(options[i], font, 22);
+        option.setFillColor(i == pause_selection ? sf::Color::Yellow : sf::Color::White);
+        option.setPosition(
+            WINDOW_WIDTH / 2.f - option.getLocalBounds().width / 2.f,
+            y
+        );
+
+        window.draw(option);
+    }
+
+    // SFX slider gets its own row below the menu options.
+    // SFX slider sits on its own row, leaving room for a future music slider below it.
+    sf::Text volume_label("SFX", font, 20);
+    volume_label.setFillColor(pause_selection == 5 ? sf::Color::Yellow : sf::Color::White);
+    volume_label.setPosition(135.f, 485.f);
+    window.draw(volume_label);
+
+    sf::RectangleShape volume_background(sf::Vector2f(300.f, 14.f));
+    volume_background.setPosition((WINDOW_WIDTH - 300.f) / 2.f, 490.f);
+    volume_background.setFillColor(sf::Color(45, 45, 55, 255));
+    volume_background.setOutlineThickness(2.f);
+    volume_background.setOutlineColor(pause_selection == 5 ? sf::Color::Yellow : sf::Color::White);
+    window.draw(volume_background);
+
+    sf::RectangleShape volume_bar(sf::Vector2f(300.f * (sfx_volume / 100.f), 14.f));
+    volume_bar.setPosition((WINDOW_WIDTH - 300.f) / 2.f, 490.f);
+    volume_bar.setFillColor(sf::Color::Cyan);
+    window.draw(volume_bar);
+
+    sf::Text volume_value(std::to_string(static_cast<int>(sfx_volume)) + "%", font, 18);
+    volume_value.setFillColor(sf::Color::Cyan);
+    volume_value.setPosition((WINDOW_WIDTH - 300.f) / 2.f + 320.f, 484.f);
+    window.draw(volume_value);
+
+    sf::Text music_label("MUSIC", font, 20);
+    music_label.setFillColor(pause_selection == 6 ? sf::Color::Yellow : sf::Color::White);
+    music_label.setPosition(120.f, 530.f);
+    window.draw(music_label);
+
+    sf::RectangleShape music_background(sf::Vector2f(300.f, 14.f));
+    music_background.setPosition((WINDOW_WIDTH - 300.f) / 2.f, 535.f);
+    music_background.setFillColor(sf::Color(45, 45, 55, 255));
+    music_background.setOutlineThickness(2.f);
+    music_background.setOutlineColor(pause_selection == 6 ? sf::Color::Yellow : sf::Color::White);
+    window.draw(music_background);
+
+    sf::RectangleShape music_bar(sf::Vector2f(300.f * (music_volume / 100.f), 14.f));
+    music_bar.setPosition((WINDOW_WIDTH - 300.f) / 2.f, 535.f);
+    music_bar.setFillColor(sf::Color::Cyan);
+    window.draw(music_bar);
+
+    sf::Text music_value(std::to_string(static_cast<int>(music_volume)) + "%", font, 18);
+    music_value.setFillColor(sf::Color::Cyan);
+    music_value.setPosition((WINDOW_WIDTH - 300.f) / 2.f + 320.f, 529.f);
+    window.draw(music_value);
+
+    sf::Text navigation(
+        "UP/DOWN: SELECT    LEFT/RIGHT: ADJUST    ENTER: CONFIRM    ESC: RESUME",
+        font,
+        13
+    );
+    navigation.setFillColor(sf::Color(120, 120, 140, 255));
+    navigation.setPosition(
+        WINDOW_WIDTH / 2.f - navigation.getLocalBounds().width / 2.f,
+        675.f
+    );
+    window.draw(navigation);
+
+    window.display();
+}
+
 void menu_mode() {
     window.clear();
 
@@ -906,41 +1358,7 @@ void game_over() {
     window.draw(restart_text);
 
     if(sf::Keyboard::isKeyPressed(sf::Keyboard::Enter)) {
-        current_state = MAIN_MENU;
-        reset_player();
-        projs.clear();
-        belt.clear();
-        powerups.clear();
-        trail.clear();
-        explosion_active = false;
-
-        score = 0;
-        interval_count = 0;
-
-        energy = MAX_ENERGY;
-        health = MAX_HEALTH;
-        damage_cooldown = 0;
-
-        cooldown = 0;
-        interval = BASE_INTERVAL;
-        shot_time = interval;
-        spawn_rate = INITIAL_SPAWN_RATE;
-        spawn_chance = spawn_rate;
-        swap_speed = INITIAL_SWAP_SPEED;
-        swap_count = swap_speed;
-        speed = BASE_SPEED;
-        turn_speed = BASE_TURN_SPEED;
-
-        agility_timer = 0;
-        rapid_fire_timer = 0;
-        shield_timer = 0;
-        shield_active = false;
-
-        trail_target_color = TRAIL_READY_COLOR;
-        last_shot_type = 0;
-        heavy_cooldown_start = interval;
-
-        player.setFillColor(PLAYER_BASE_COLOR);
+        reset_run();
     }
 
     window.display();
@@ -948,6 +1366,10 @@ void game_over() {
 
 void player_death() {
     current_state = GAME_OVER;
+    audio.stop_trail_hum();
+    audio.stop_ambient_music();
+    audio.play(AudioSystem::PLAYER_DEATH);
+    audio.play(AudioSystem::GAME_OVER);
 
     display_explosion(
         sf::Vector2f(
@@ -977,6 +1399,10 @@ int main() {
     if(!font.loadFromFile("Orbitron-VariableFont_wght.ttf")) {
         std::cerr << "Error loading font" << std::endl;
         return -1;
+    }
+
+    if(!audio.setup()) {
+        std::cerr << "Some audio files could not be loaded." << std::endl;
     }
 
     player.setFillColor(PLAYER_BASE_COLOR);
@@ -1044,6 +1470,137 @@ int main() {
             if(event.type == sf::Event::Closed) {
                 window.close();
             }
+
+            if(event.type == sf::Event::KeyPressed) {
+                if(current_state == PLAYING && event.key.code == keybinds.pause) {
+                    current_state = PAUSED_MENU;
+                    audio.stop_trail_hum();
+                    audio.stop_ambient_music();
+                    pause_selection = 0;
+                    audio.play(AudioSystem::SETTING_ADJUSTMENT);
+                }
+                else if(current_state == PAUSED_MENU) {
+                    if(show_keybinds) {
+                        if(waiting_for_keybind) {
+                            if(event.key.code == sf::Keyboard::Escape) {
+                                waiting_for_keybind = false;
+                            }
+                            else {
+                                switch(keybind_selection) {
+                                    case 0:
+                                        keybinds.fire = event.key.code;
+                                        break;
+                                    case 1:
+                                        keybinds.heavy_modifier = event.key.code;
+                                        break;
+                                    case 2:
+                                        keybinds.turn_left = event.key.code;
+                                        break;
+                                    case 3:
+                                        keybinds.turn_right = event.key.code;
+                                        break;
+                                    case 4:
+                                        keybinds.toggle_hitboxes = event.key.code;
+                                        break;
+                                    case 5:
+                                        keybinds.pause = event.key.code;
+                                        break;
+                                }
+
+                                waiting_for_keybind = false;
+                                audio.play(AudioSystem::SETTING_ADJUSTMENT);
+                            }
+                        }
+                        else if(event.key.code == sf::Keyboard::Escape) {
+                            show_keybinds = false;
+                            audio.play(AudioSystem::SETTING_ADJUSTMENT);
+                        }
+                        else if(event.key.code == sf::Keyboard::Up) {
+                            keybind_selection = (keybind_selection + 5) % 6;
+                            audio.play(AudioSystem::SETTING_ADJUSTMENT);
+                        }
+                        else if(event.key.code == sf::Keyboard::Down) {
+                            keybind_selection = (keybind_selection + 1) % 6;
+                            audio.play(AudioSystem::SETTING_ADJUSTMENT);
+                        }
+                        else if(event.key.code == sf::Keyboard::Enter) {
+                            waiting_for_keybind = true;
+                            audio.play(AudioSystem::SETTING_ADJUSTMENT);
+                        }
+                    }
+                    else if(event.key.code == sf::Keyboard::Escape) {
+                        current_state = PLAYING;
+                        if(rocket_idle_hum) {
+                            audio.start_trail_hum();
+                        }
+                        audio.start_ambient_music();
+                        audio.play(AudioSystem::SETTING_ADJUSTMENT);
+                    }
+                    else if(event.key.code == sf::Keyboard::Up) {
+                        pause_selection = (pause_selection + 6) % 7;
+                        audio.play(AudioSystem::SETTING_ADJUSTMENT);
+                    }
+                    else if(event.key.code == sf::Keyboard::Down) {
+                        pause_selection = (pause_selection + 1) % 7;
+                        audio.play(AudioSystem::SETTING_ADJUSTMENT);
+                    }
+                    else if(event.key.code == sf::Keyboard::Left && pause_selection == 5) {
+                        sfx_volume = std::max(0.f, sfx_volume - 10.f);
+                        update_sfx_volume();
+                        audio.play(AudioSystem::SETTING_ADJUSTMENT);
+                    }
+                    else if(event.key.code == sf::Keyboard::Right && pause_selection == 5) {
+                        sfx_volume = std::min(100.f, sfx_volume + 10.f);
+                        update_sfx_volume();
+                        audio.play(AudioSystem::SETTING_ADJUSTMENT);
+                    }
+                    else if(event.key.code == sf::Keyboard::Left && pause_selection == 6) {
+                        music_volume = std::max(0.f, music_volume - 10.f);
+                        audio.set_music_volume(music_volume);
+                        audio.play(AudioSystem::SETTING_ADJUSTMENT);
+                    }
+                    else if(event.key.code == sf::Keyboard::Right && pause_selection == 6) {
+                        music_volume = std::min(100.f, music_volume + 10.f);
+                        audio.set_music_volume(music_volume);
+                        audio.play(AudioSystem::SETTING_ADJUSTMENT);
+                    }
+                    else if(event.key.code == sf::Keyboard::Enter) {
+                        if(pause_selection == 0) {
+                            current_state = PLAYING;
+                            if(rocket_idle_hum) {
+                                audio.start_trail_hum();
+                            }
+                            audio.start_ambient_music();
+                            audio.play(AudioSystem::SETTING_ADJUSTMENT);
+                        }
+                        else if(pause_selection == 1) {
+                            reset_run();
+                            current_state = PLAYING;
+                            if(rocket_idle_hum) {
+                                audio.start_trail_hum();
+                            }
+                            audio.start_ambient_music();
+                            audio.play(AudioSystem::SETTING_ADJUSTMENT);
+                        }
+                        else if(pause_selection == 2) {
+                            reset_run();
+                            wait_for_enter_release = true;
+                            audio.play(AudioSystem::SETTING_ADJUSTMENT);
+                        }
+                        else if(pause_selection == 3) {
+                            rocket_idle_hum = !rocket_idle_hum;
+                            audio.stop_trail_hum();
+                            audio.play(AudioSystem::SETTING_ADJUSTMENT);
+                        }
+                        else if(pause_selection == 4) {
+                            show_keybinds = true;
+                            keybind_selection = 0;
+                            waiting_for_keybind = false;
+                            audio.play(AudioSystem::SETTING_ADJUSTMENT);
+                        }
+                    }
+                }
+            }
         }
 
         // menu handling
@@ -1051,8 +1608,14 @@ int main() {
         if(current_state == MAIN_MENU) {
             menu_mode();
 
-            if(sf::Keyboard::isKeyPressed(sf::Keyboard::Enter)) {
+            if(!wait_for_enter_release && sf::Keyboard::isKeyPressed(sf::Keyboard::Enter)) {
                 current_state = PLAYING;
+                audio.start_ambient_music();
+                audio.play(AudioSystem::SETTING_ADJUSTMENT);
+            }
+
+            if(!sf::Keyboard::isKeyPressed(sf::Keyboard::Enter)) {
+                wait_for_enter_release = false;
             }
         }
 
@@ -1075,6 +1638,7 @@ int main() {
 
                 if(agility_timer == 0) {
                     turn_speed = BASE_TURN_SPEED;
+                    audio.play(AudioSystem::AGILITY_DEACTIVATE);
 
                     if(rapid_fire_timer > 0) {
                         player.setFillColor(PLAYER_RAPID_FIRE_COLOR);
@@ -1090,6 +1654,7 @@ int main() {
 
                 if(rapid_fire_timer == 0) {
                     interval = BASE_INTERVAL;
+                    audio.play(AudioSystem::RAPID_FIRE_DEACTIVATE);
 
                     if(agility_timer > 0) {
                         player.setFillColor(PLAYER_AGILITY_COLOR);
@@ -1105,6 +1670,7 @@ int main() {
 
                 if(shield_timer == 0) {
                     shield_active = false;
+                    audio.play(AudioSystem::SHIELD_DOWN);
                 }
             }
 
@@ -1112,7 +1678,7 @@ int main() {
                 damage_cooldown--;
             }
 
-            if(sf::Keyboard::isKeyPressed(sf::Keyboard::Grave) && swap_count > swap_speed) {
+            if(sf::Keyboard::isKeyPressed(keybinds.toggle_hitboxes) && swap_count > swap_speed) {
                 show_hitboxes = !show_hitboxes;
                 swap_count = 0;
             }
@@ -1120,12 +1686,12 @@ int main() {
             // ------------------------------------------------------------
             // Manual turning
             // ------------------------------------------------------------
-            if(sf::Keyboard::isKeyPressed(sf::Keyboard::Left)) {
+            if(sf::Keyboard::isKeyPressed(keybinds.turn_left)) {
                 rotate(player, 3, -turn_speed);
                 rotate(player_hitbox, 3, -turn_speed);
             }
 
-            if(sf::Keyboard::isKeyPressed(sf::Keyboard::Right)) {
+            if(sf::Keyboard::isKeyPressed(keybinds.turn_right)) {
                 rotate(player, 3, turn_speed);
                 rotate(player_hitbox, 3, turn_speed);
             }
@@ -1133,7 +1699,7 @@ int main() {
             // ------------------------------------------------------------
             // Energy
             // ------------------------------------------------------------
-            bool firing = sf::Keyboard::isKeyPressed(sf::Keyboard::Up);
+            bool firing = sf::Keyboard::isKeyPressed(keybinds.fire);
 
             if(!firing) {
                 energy += ENERGY_REGEN;
@@ -1143,10 +1709,16 @@ int main() {
                 }
             }
 
-            // ------------------------------------------------------------
+            if(rocket_idle_hum) {
+                audio.start_trail_hum();
+            }
+            else {
+                audio.stop_trail_hum();
+            }
+
             // Shooting
             // ------------------------------------------------------------
-            if(sf::Keyboard::isKeyPressed(sf::Keyboard::Up) && (sf::Keyboard::isKeyPressed(sf::Keyboard::LShift) || sf::Keyboard::isKeyPressed(sf::Keyboard::RShift)) && shot_time >= interval && energy >= HEAVY_PROJECTILE_ENERGY) {
+            if(sf::Keyboard::isKeyPressed(keybinds.fire) && sf::Keyboard::isKeyPressed(keybinds.heavy_modifier) && shot_time >= interval && energy >= HEAVY_PROJECTILE_ENERGY) {
                 Projectile projectile(player, 2);
                 projs.push_back(projectile);
                 energy -= projectile.energy_cost;
@@ -1156,8 +1728,9 @@ int main() {
 
                 trail_target_color = TRAIL_HEAVY_COLOR;
                 last_shot_type = 2;
+                audio.play(AudioSystem::HEAVY_SHOT);
             }
-            else if(sf::Keyboard::isKeyPressed(sf::Keyboard::Up) && shot_time >= interval && energy >= BASIC_PROJECTILE_ENERGY) {
+            else if(sf::Keyboard::isKeyPressed(keybinds.fire) && shot_time >= interval && energy >= BASIC_PROJECTILE_ENERGY) {
                 Projectile projectile(player, 1);
                 projs.push_back(projectile);
                 energy -= projectile.energy_cost;
@@ -1166,6 +1739,7 @@ int main() {
 
                 trail_target_color = TRAIL_BASIC_COLOR;
                 last_shot_type = 1;
+                audio.play(AudioSystem::BASIC_SHOT);
             }
 
             // ------------------------------------------------------------
@@ -1340,6 +1914,8 @@ int main() {
                             10.f
                         );
 
+                        audio.play(AudioSystem::HULL_DAMAGED);
+
                         belt[i].durability = 0;
                     }
                     else if(belt[i].toughness >= ONE_SHOT_TOUGHNESS) {
@@ -1355,6 +1931,7 @@ int main() {
 
                         health -= hull_damage;
                         damage_cooldown = DAMAGE_COOLDOWN;
+                        audio.play(AudioSystem::HULL_DAMAGED);
 
                         if(health <= 0) {
                             player_death();
@@ -1399,6 +1976,19 @@ int main() {
                     );
 
                     // ----------------------------------------------------
+                    // Asteroid destruction sound
+                    // ----------------------------------------------------
+                    if(belt[i].toughness >= 2000) {
+                        audio.play(AudioSystem::HIGH_TOUGHNESS_ASTEROID_BREAK);
+                    }
+                    else if(belt[i].toughness >= 1000) {
+                        audio.play(AudioSystem::MID_TOUGHNESS_ASTEROID_BREAK);
+                    }
+                    else {
+                        audio.play(AudioSystem::LOW_TOUGHNESS_ASTEROID_BREAK);
+                    }
+
+                    // ----------------------------------------------------
                     // Powerup drop
                     // ----------------------------------------------------
                     float drop_chance = belt[i].get_drop_chance();
@@ -1413,6 +2003,8 @@ int main() {
                                 powerup_type
                             )
                         );
+
+                        audio.play(AudioSystem::POWERUP_SPAWN);
                     }
 
                     belt.erase(belt.begin() + i);
@@ -1453,6 +2045,19 @@ int main() {
                         powerups[i].getFillColor(),
                         5.f
                     );
+
+                    if(powerups[i].p_type == 1) {
+                        audio.play(AudioSystem::HULL_REGEN);
+                    }
+                    else if(powerups[i].p_type == 2) {
+                        audio.play(AudioSystem::SHIELD_UP);
+                    }
+                    else if(powerups[i].p_type == 3) {
+                        audio.play(AudioSystem::AGILITY_ACTIVATE);
+                    }
+                    else if(powerups[i].p_type == 4) {
+                        audio.play(AudioSystem::RAPID_FIRE_ACTIVATE);
+                    }
 
                     powerups.erase(powerups.begin() + i);
                     i--;
@@ -1548,6 +2153,10 @@ int main() {
             // Display
             // ------------------------------------------------------------
             window.display();
+        }
+
+        else if(current_state == PAUSED_MENU) {
+            draw_pause_menu();
         }
 
         else if(current_state == GAME_OVER) {
