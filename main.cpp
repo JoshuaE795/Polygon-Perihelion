@@ -1,4 +1,4 @@
-// include
+// Include
 // --------------------------------------------------------------------
 #include <SFML/Graphics.hpp>
 #include <SFML/Window.hpp>
@@ -11,6 +11,8 @@
 #include <vector>
 #include <algorithm>
 #include <array>
+#include <string>
+#include <mach-o/dyld.h>
 // --------------------------------------------------------------------
 
 /*
@@ -19,6 +21,34 @@ Run command:
 g++ -std=c++11 main.cpp -I/opt/homebrew/Cellar/sfml/2.6.1/include -o prog -L/opt/homebrew/Cellar/sfml/2.6.1/lib -lsfml-graphics -lsfml-window -lsfml-system -lsfml-audio
 
 */
+
+// --------------------------------------------------------------------
+// Asset paths
+// --------------------------------------------------------------------
+std::string get_executable_directory() {
+    uint32_t size = 1024;
+    std::vector<char> path(size);
+
+    if(_NSGetExecutablePath(path.data(), &size) != 0) {
+        path.resize(size);
+        if(_NSGetExecutablePath(path.data(), &size) != 0) {
+            return ".";
+        }
+    }
+
+    std::string full_path(path.data());
+    std::size_t slash = full_path.find_last_of('/');
+
+    if(slash == std::string::npos) {
+        return ".";
+    }
+
+    return full_path.substr(0, slash);
+}
+
+std::string asset_path(const std::string &relative_path) {
+    return get_executable_directory() + "/" + relative_path;
+}
 
 // constants
 // --------------------------------------------------------------------
@@ -223,7 +253,7 @@ public:
         loaded = true;
 
         for(int i = 0; i < SOUND_COUNT; i++) {
-            if(!buffers[i].loadFromFile(paths[i])) {
+            if(!buffers[i].loadFromFile(asset_path(paths[i]))) {
                 std::cerr << "Error loading sound: " << paths[i] << std::endl;
                 loaded = false;
             }
@@ -236,7 +266,7 @@ public:
         trail_hum.setVolume(sfx_volume);
         trail_hum.setLoop(true);
 
-        if(!ambient_music.openFromFile("sounds/ambient_track.mp3")) {
+        if(!ambient_music.openFromFile(asset_path("sounds/ambient_track.mp3"))) {
             std::cerr << "Error loading music: sounds/ambient_track.mp3" << std::endl;
             loaded = false;
         }
@@ -1396,7 +1426,7 @@ int main() {
     // --------------------------------------------------------------------
     window.setFramerateLimit(FRAME_RATE_LIMIT);
 
-    if(!font.loadFromFile("Orbitron-VariableFont_wght.ttf")) {
+    if(!font.loadFromFile(asset_path("Orbitron-VariableFont_wght.ttf"))) {
         std::cerr << "Error loading font" << std::endl;
         return -1;
     }
